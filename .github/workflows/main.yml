@@ -3,11 +3,16 @@ name: Build, Push & Deploy FastAPI App
 on:
   push:
     branches:
+      - dev
       - main
 
 jobs:
   build-push-deploy:
     runs-on: ubuntu-latest
+
+    env:
+      IMAGE_NAME: fastapi-tutorial
+      CONTAINER_NAME: fastapi-app
 
     steps:
     # 1. Checkout repository
@@ -24,26 +29,59 @@ jobs:
     # 3. Build Docker image
     - name: Build Docker Image
       run: |
-        docker build -t ${{ secrets.DOCKER_USERNAME }}/fastapi-tutorial:latest .
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest .
 
-    # 4. Push image to Docker Hub
+    # 4. Push Docker image
     - name: Push Docker Image
       run: |
-        docker push ${{ secrets.DOCKER_USERNAME }}/fastapi-tutorial:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
 
-    # 5. Deploy on EC2
-    - name: Deploy on EC2
+    # ==========================
+    # 5. Deploy to DEV EC2
+    # ==========================
+    - name: Deploy to DEV EC2
+      if: github.ref == 'refs/heads/dev'
       uses: appleboy/ssh-action@v1.0.0
       with:
         host: ${{ secrets.EC2_HOST }}
-        username: ${{ secrets.EC2_USER }}
+        username: ubuntu
         key: ${{ secrets.EC2_SSH_KEY }}
+        port: 22
+        timeout: 30s
+        command_timeout: 10m
         script: |
-          docker pull ${{ secrets.DOCKER_USERNAME }}/fastapi-tutorial:latest
-          docker stop fastapi-app || true
-          docker rm fastapi-app || true
+          echo "Deploying to DEV environment..."
+          docker pull ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          docker stop ${{ env.CONTAINER_NAME }} || true
+          docker rm ${{ env.CONTAINER_NAME }} || true
           docker run -d \
-            --name fastapi-app \
+            --name ${{ env.CONTAINER_NAME }} \
             -p 8000:8000 \
-            ${{ secrets.DOCKER_USERNAME }}/fastapi-tutorial:latest
+            --restart unless-stopped \
+            ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          docker image prune -f
+
+    # ==========================
+    # 6. Deploy to PROD EC2
+    # ==========================
+    - name: Deploy to PROD EC2
+      if: github.ref == 'refs/heads/main'
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.PROD_EC2_HOST }}
+        username: ubuntu
+        key: ${{ secrets.PROD_EC2_SSH_KEY }}
+        port: 22
+        timeout: 30s
+        command_timeout: 10m
+        script: |
+          echo "Deploying to PROD environment..."
+          docker pull ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          docker stop ${{ env.CONTAINER_NAME }} || true
+          docker rm ${{ env.CONTAINER_NAME }} || true
+          docker run -d \
+            --name ${{ env.CONTAINER_NAME }} \
+            -p 8000:8000 \
+            --restart unless-stopped \
+            ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
           docker image prune -f
